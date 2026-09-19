@@ -452,9 +452,9 @@ bot.on('message', async (msg) => {
     // ====================================
 
     if (text === '💎 شحن UC والألعاب') {
-      return bot.sendMessage(
-        chatId,
-        🎮 شحن شدات PUBG
+  return bot.sendMessage(
+    chatId,
+    `🎮 شحن شدات PUBG
 
 🟢📱 المدار الجديد
 الشحن عن طريق رصيد المدار:
@@ -486,10 +486,13 @@ bot.on('message', async (msg) => {
 🔥 توجد باقات أعلى وتوفير عدد حسب الطلب.
 
 📞 للتفاصيل والتواصل:
-@natoo_06
-        keyboard
-      );
+@natoo_06`,
+    keyboard
+  );
     }
+  
+    
+  
 
     // ====================================
     // تقييم الخدمة
