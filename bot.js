@@ -11,12 +11,15 @@ const bot = new TelegramBot(token, { polling: true });
 
 const CHANNEL_USERNAME = 'Pubg_Libya_Store';
 
-// تخزين الحسابات التي تصل للبوت
+// تخزين الحسابات
 const accounts = [];
 
 let nextAccountNumber = 1;
 
-// أزرار البوت الرئيسية
+// تجميع صور الألبوم
+const mediaGroups = new Map();
+
+// أزرار البوت
 const keyboard = {
   reply_markup: {
     keyboard: [
@@ -45,7 +48,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // ========================================
-// إضافة رقم للحساب
+// إنشاء رقم الحساب
 // ========================================
 
 function createAccountNumber() {
@@ -54,19 +57,13 @@ function createAccountNumber() {
 }
 
 // ========================================
-// البحث عن حساب بالرقم
+// البحث عن الحساب بالرقم
 // ========================================
 
 function findAccountByNumber(input) {
   if (!input) return null;
 
   let search = String(input).trim().toLowerCase();
-
-  // يقبل:
-  // 001
-  // #001
-  // 1
-  // #1
 
   search = search.replace('#', '');
 
@@ -79,42 +76,64 @@ function findAccountByNumber(input) {
   const formatted = String(number).padStart(3, '0');
 
   return accounts.find(
-    (account) =>
+    account =>
       account.number.replace('#', '') === formatted
   ) || null;
 }
 
 // ========================================
-// إرسال الحساب المختار
+// إرسال الحساب مع جميع الصور
 // ========================================
 
 async function sendSelectedAccount(chatId, account) {
   if (!account) {
     return bot.sendMessage(
       chatId,
-      `❌ لم يتم العثور على هذا الحساب.`,
+      `❌ هذا الحساب غير موجود.`,
       keyboard
     );
   }
 
-  // نحاول أولاً إعادة إرسال المنشور الأصلي
-  // حتى تظهر الصور الموجودة في منشور القناة
-  try {
-    await bot.forwardMessage(
-      chatId,
-      `@${CHANNEL_USERNAME}`,
-      account.messageId
-    );
+  // إذا عندنا صور محفوظة
+  if (
+    account.photos &&
+    account.photos.length > 0
+  ) {
+    try {
+      const media = account.photos.map(
+        (photo, index) => {
+          const item = {
+            type: 'photo',
+            media: photo
+          };
 
-    return;
-  } catch (error) {
-    console.log(
-      'تعذر إعادة إرسال منشور القناة:',
-      error.message
-    );
+          // نضع بيانات الحساب على أول صورة فقط
+          if (index === 0) {
+            item.caption =
+              `🧾 رقم الحساب: ${account.number}\n\n` +
+              account.text;
+          }
+
+          return item;
+        }
+      );
+
+      // تيليجرام يسمح بحد أقصى 10 صور في الألبوم
+      await bot.sendMediaGroup(
+        chatId,
+        media.slice(0, 10)
+      );
+
+      return;
+    } catch (error) {
+      console.log(
+        'تعذر إرسال الصور كألبوم:',
+        error.message
+      );
+    }
   }
 
-  // إذا فشل الإرسال الأصلي، نرسل بيانات الحساب
+  // إذا ما فيش صور
   return bot.sendMessage(
     chatId,
     `🧾 رقم الحساب: ${account.number}
@@ -124,6 +143,129 @@ ${account.text}
 ━━━━━━━━━━━━━━`,
     keyboard
   );
+}
+
+// ========================================
+// حفظ حساب جديد
+// ========================================
+
+async function saveAccount(messages) {
+  try {
+    if (!messages || messages.length === 0) {
+      return;
+    }
+
+    // ترتيب رسائل الألبوم
+    messages.sort(
+      (a, b) => a.message_id - b.message_id
+    );
+
+    const firstMessage = messages[0];
+
+    const text =
+      firstMessage.text ||
+      firstMessage.caption ||
+      '';
+
+    // نتأكد أن المنشور خاص بببجي
+    if (
+      !text.includes('ببجي') &&
+      !text.includes('بـبـجي') &&
+      !text.toLowerCase().includes('pubg')
+    ) {
+      return;
+    }
+
+    // منع تكرار الحساب
+    const alreadyExists = accounts.find(
+      account =>
+        account.messageId === firstMessage.message_id
+    );
+
+    if (alreadyExists) {
+      return;
+    }
+
+    // رقم الحساب
+    const accountNumber =
+      createAccountNumber();
+
+    // استخراج جميع الصور
+    const photos = [];
+
+    messages.forEach(message => {
+      if (
+        message.photo &&
+        message.photo.length > 0
+      ) {
+        const lastPhoto =
+          message.photo[
+            message.photo.length - 1
+          ];
+
+        photos.push(lastPhoto.file_id);
+      }
+    });
+
+    const account = {
+      number: accountNumber,
+      messageId: firstMessage.message_id,
+      text: text,
+      photos: photos,
+      date: Date.now()
+    };
+
+    accounts.push(account);
+
+    nextAccountNumber++;
+
+    console.log(
+      `✅ تم حفظ الحساب ${accountNumber} | الصور: ${photos.length}`
+    );
+
+    // إضافة رقم الحساب للمنشور
+    if (!text.includes('🧾 رقم الحساب:')) {
+      const newText =
+        `🧾 رقم الحساب: ${accountNumber}\n\n` +
+        text;
+
+      try {
+        if (firstMessage.caption !== undefined) {
+          await bot.editMessageCaption(
+            newText,
+            {
+              chat_id: firstMessage.chat.id,
+              message_id:
+                firstMessage.message_id
+            }
+          );
+        } else if (firstMessage.text) {
+          await bot.editMessageText(
+            newText,
+            {
+              chat_id: firstMessage.chat.id,
+              message_id:
+                firstMessage.message_id
+            }
+          );
+        }
+
+        account.text = newText;
+
+      } catch (error) {
+        console.log(
+          'تعذر إضافة رقم الحساب للمنشور:',
+          error.message
+        );
+      }
+    }
+
+  } catch (error) {
+    console.log(
+      '❌ خطأ أثناء حفظ الحساب:',
+      error.message
+    );
+  }
 }
 
 // ========================================
@@ -141,73 +283,56 @@ bot.on('channel_post', async (msg) => {
       return;
     }
 
-    const text = msg.text || msg.caption || '';
+    // ====================================
+    // إذا المنشور عبارة عن ألبوم صور
+    // ====================================
 
-    // نتأكد أن المنشور خاص بحساب PUBG
-    if (
-      !text.includes('ببجي') &&
-      !text.includes('بـبـجي') &&
-      !text.toLowerCase().includes('pubg')
-    ) {
-      return;
-    }
+    if (msg.media_group_id) {
 
-    // منع حفظ نفس المنشور أكثر من مرة
-    const alreadyExists = accounts.find(
-      (account) => account.messageId === msg.message_id
-    );
-
-    if (alreadyExists) {
-      return;
-    }
-
-    // رقم تلقائي
-    const accountNumber = createAccountNumber();
-
-    const account = {
-      number: accountNumber,
-      messageId: msg.message_id,
-      text: text,
-      date: Date.now()
-    };
-
-    accounts.push(account);
-
-    nextAccountNumber++;
-
-    console.log(
-      `✅ تم حفظ الحساب ${accountNumber}`
-    );
-
-    // إضافة رقم الحساب تلقائيًا للمنشور
-    if (!text.includes('🧾 رقم الحساب:')) {
-      const newText =
-        `🧾 رقم الحساب: ${accountNumber}\n\n` +
-        text;
-
-      try {
-        if (msg.caption !== undefined) {
-          await bot.editMessageCaption(newText, {
-            chat_id: msg.chat.id,
-            message_id: msg.message_id
-          });
-        } else {
-          await bot.editMessageText(newText, {
-            chat_id: msg.chat.id,
-            message_id: msg.message_id
-          });
-        }
-
-        // تحديث النص المحفوظ أيضًا
-        account.text = newText;
-
-      } catch (error) {
-        console.log(
-          'تعذر إضافة الرقم للمنشور:',
-          error.message
+      if (!mediaGroups.has(msg.media_group_id)) {
+        mediaGroups.set(
+          msg.media_group_id,
+          []
         );
       }
+
+      const group =
+        mediaGroups.get(msg.media_group_id);
+
+      group.push(msg);
+
+      // إلغاء المؤقت السابق
+      if (group.timer) {
+        clearTimeout(group.timer);
+      }
+
+      // ننتظر حتى تصل كل صور الألبوم
+      group.timer = setTimeout(
+        async () => {
+          const messages =
+            mediaGroups.get(
+              msg.media_group_id
+            );
+
+          mediaGroups.delete(
+            msg.media_group_id
+          );
+
+          if (messages) {
+            await saveAccount(messages);
+          }
+        },
+        2000
+      );
+
+      return;
     }
+
+    // ====================================
+    // منشور عادي بدون ألبوم
+    // ====================================
+
+    await saveAccount([msg]);
 
   } catch (error) {
     console.log(
@@ -218,7 +343,7 @@ bot.on('channel_post', async (msg) => {
 });
 
 // ========================================
-// التعامل مع رسائل المستخدمين
+// رسائل المستخدمين
 // ========================================
 
 bot.on('message', async (msg) => {
@@ -226,7 +351,9 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    if (!text || text === '/start') return;
+    if (!text || text === '/start') {
+      return;
+    }
 
     // ====================================
     // آخر الحسابات
@@ -244,18 +371,20 @@ bot.on('message', async (msg) => {
         );
       }
 
-      // آخر 10 حسابات
-      const latest = accounts
-        .slice(-10)
-        .reverse();
+      const latest =
+        accounts
+          .slice(-10)
+          .reverse();
 
       const buttons = [];
 
-      latest.forEach((account) => {
+      latest.forEach(account => {
         buttons.push([
           {
-            text: `🧾 ${account.number}`,
-            callback_data: `account_${account.number.replace('#', '')}`
+            text:
+              `🧾 ${account.number}`,
+            callback_data:
+              `account_${account.number.replace('#', '')}`
           }
         ]);
       });
@@ -281,7 +410,7 @@ bot.on('message', async (msg) => {
     }
 
     // ====================================
-    // البحث عن حساب
+    // البحث
     // ====================================
 
     if (text === '🔍 البحث عن حساب') {
@@ -375,7 +504,7 @@ bot.on('message', async (msg) => {
     }
 
     // ====================================
-    // البحث برقم الحساب
+    // البحث المباشر بالرقم
     // ====================================
 
     const accountByNumber =
@@ -392,12 +521,13 @@ bot.on('message', async (msg) => {
     // البحث بالكلمة أو الاسم
     // ====================================
 
-    const search = text.trim().toLowerCase();
+    const search =
+      text.trim().toLowerCase();
 
     if (search.length > 0) {
 
-      const results = accounts.filter(
-        (account) => {
+      const results =
+        accounts.filter(account => {
           return (
             account.number
               .toLowerCase()
@@ -406,8 +536,7 @@ bot.on('message', async (msg) => {
               .toLowerCase()
               .includes(search)
           );
-        }
-      );
+        });
 
       if (results.length === 0) {
         return bot.sendMessage(
@@ -421,7 +550,7 @@ bot.on('message', async (msg) => {
         );
       }
 
-      // إذا وجد حساب واحد فقط
+      // حساب واحد
       if (results.length === 1) {
         return sendSelectedAccount(
           chatId,
@@ -429,20 +558,21 @@ bot.on('message', async (msg) => {
         );
       }
 
-      // إذا وجد أكثر من حساب
+      // أكثر من حساب
       const buttons = [];
 
-      results.slice(0, 10).forEach(
-        (account) => {
+      results
+        .slice(0, 10)
+        .forEach(account => {
           buttons.push([
             {
-              text: `🧾 ${account.number}`,
+              text:
+                `🧾 ${account.number}`,
               callback_data:
                 `account_${account.number.replace('#', '')}`
             }
           ]);
-        }
-      );
+        });
 
       return bot.sendMessage(
         chatId,
@@ -466,25 +596,22 @@ bot.on('message', async (msg) => {
 });
 
 // ========================================
-// التعامل مع أزرار الحسابات
+// أزرار الحسابات
 // ========================================
 
 bot.on('callback_query', async (query) => {
   try {
-    const chatId = query.message.chat.id;
+    const chatId =
+      query.message.chat.id;
+
     const data = query.data;
 
-    // إيقاف علامة التحميل على الزر
     await bot.answerCallbackQuery(
       query.id
     );
 
-    // ====================================
     // القائمة الرئيسية
-    // ====================================
-
     if (data === 'main_menu') {
-
       return bot.sendMessage(
         chatId,
         `🔥 مرحبًا بك في بوت BRAND Libya
@@ -494,14 +621,14 @@ bot.on('callback_query', async (query) => {
       );
     }
 
-    // ====================================
     // اختيار حساب
-    // ====================================
-
     if (data.startsWith('account_')) {
 
       const number =
-        data.replace('account_', '');
+        data.replace(
+          'account_',
+          ''
+        );
 
       const account =
         findAccountByNumber(number);
@@ -514,12 +641,10 @@ bot.on('callback_query', async (query) => {
         );
       }
 
-      await sendSelectedAccount(
+      return sendSelectedAccount(
         chatId,
         account
       );
-
-      return;
     }
 
   } catch (error) {
@@ -534,14 +659,26 @@ bot.on('callback_query', async (query) => {
 // أخطاء البوت
 // ========================================
 
-bot.on('polling_error', (error) => {
+bot.on('polling_error', error => {
   console.log(
     '❌ Polling Error:',
     error.message
   );
 });
 
-console.log('================================');
-console.log('🔥 BRAND Libya Bot يعمل الآن');
-console.log('📡 القناة:', CHANNEL_USERNAME);
-console.log('================================');
+console.log(
+  '================================'
+);
+
+console.log(
+  '🔥 BRAND Libya Bot يعمل الآن'
+);
+
+console.log(
+  '📡 القناة:',
+  CHANNEL_USERNAME
+);
+
+console.log(
+  '================================'
+);
